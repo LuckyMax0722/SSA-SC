@@ -34,6 +34,64 @@ def load(model, optimizer, scheduler, resume, path, logger):
     return model, optimizer, scheduler, epoch
 
 
+def transform_spconv1_spconv2(pretrained_model):
+  model_dict = {
+    'SegNet.downCntx.conv1.weight',
+    'SegNet.downCntx.conv1_2.weight',
+    'SegNet.downCntx.conv2.weight',
+    'SegNet.downCntx.conv3.weight',
+    'SegNet.resBlock2.conv1.weight',
+    'SegNet.resBlock2.conv1_2.weight',
+    'SegNet.resBlock2.conv2.weight',
+    'SegNet.resBlock2.conv3.weight',
+    'SegNet.resBlock2.pool.weight',
+    'SegNet.resBlock3.conv1.weight',
+    'SegNet.resBlock3.conv1_2.weight',
+    'SegNet.resBlock3.conv2.weight',
+    'SegNet.resBlock3.conv3.weight',
+    'SegNet.resBlock3.pool.weight',
+    'SegNet.resBlock4.conv1.weight',
+    'SegNet.resBlock4.conv1_2.weight',
+    'SegNet.resBlock4.conv2.weight',
+    'SegNet.resBlock4.conv3.weight',
+    'SegNet.resBlock4.pool.weight',
+    'SegNet.resBlock5.conv1.weight',
+    'SegNet.resBlock5.conv1_2.weight',
+    'SegNet.resBlock5.conv2.weight',
+    'SegNet.resBlock5.conv3.weight',
+    'SegNet.resBlock5.pool.weight',
+    'SegNet.upBlock0.trans_dilao.weight',
+    'SegNet.upBlock0.conv1.weight',
+    'SegNet.upBlock0.conv2.weight',
+    'SegNet.upBlock0.conv3.weight',
+    'SegNet.upBlock0.up_subm.weight',
+    'SegNet.upBlock1.trans_dilao.weight',
+    'SegNet.upBlock1.conv1.weight',
+    'SegNet.upBlock1.conv2.weight',
+    'SegNet.upBlock1.conv3.weight',
+    'SegNet.upBlock1.up_subm.weight',
+    'SegNet.upBlock2.trans_dilao.weight',
+    'SegNet.upBlock2.conv1.weight',
+    'SegNet.upBlock2.conv2.weight',
+    'SegNet.upBlock2.conv3.weight',
+    'SegNet.upBlock2.up_subm.weight',
+    'SegNet.upBlock3.trans_dilao.weight',
+    'SegNet.upBlock3.conv1.weight',
+    'SegNet.upBlock3.conv2.weight',
+    'SegNet.upBlock3.conv3.weight',
+    'SegNet.upBlock3.up_subm.weight',
+    'SegNet.ReconNet.conv1.weight',
+    'SegNet.ReconNet.conv1_2.weight',
+    'SegNet.ReconNet.conv1_3.weight',
+    'SegNet.logits.weight'
+  }
+
+  for key in pretrained_model['model'].keys():
+      if key in model_dict:
+          pretrained_model['model'][key] = pretrained_model['model'][key].permute([4, 0, 1, 2, 3])
+  
+  return pretrained_model
+
 def load_model(model, filepath, logger):
   '''
   Load checkpoint file
@@ -43,6 +101,9 @@ def load_model(model, filepath, logger):
   assert os.path.isfile(filepath), '=> No file found at {}'
   checkpoint = torch.load(filepath)
 
+  # for spconv1 --> spconv2
+  checkpoint = transform_spconv1_spconv2(checkpoint)
+  
   if isinstance(model, (DataParallel, DistributedDataParallel)):
     model.module.load_state_dict(checkpoint.pop('model'))
   else:

@@ -3,49 +3,54 @@
 # @file: segmentator_3d_asymm_spconv.py
 
 import numpy as np
-import spconv
 import torch
 from torch import nn
 
+from spconv.pytorch.conv import (SparseConv3d, SparseInverseConv3d, SubMConv3d)
+from spconv.pytorch.core import SparseConvTensor
+
 
 def conv3x3(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=3, stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=3, stride=stride,
                              padding=1, bias=False, indice_key=indice_key)
 
 
 def conv1x3(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=(1, 3, 3), stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=(1, 3, 3), stride=stride,
                              padding=(0, 1, 1), bias=False, indice_key=indice_key)
 
 
 def conv1x1x3(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=(1, 1, 3), stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=(1, 1, 3), stride=stride,
                              padding=(0, 0, 1), bias=False, indice_key=indice_key)
 
 
 def conv1x3x1(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=(1, 3, 1), stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=(1, 3, 1), stride=stride,
                              padding=(0, 1, 0), bias=False, indice_key=indice_key)
 
 
 def conv3x1x1(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=(3, 1, 1), stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=(3, 1, 1), stride=stride,
                              padding=(1, 0, 0), bias=False, indice_key=indice_key)
 
 
 def conv3x1(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=(3, 1, 3), stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=(3, 1, 3), stride=stride,
                              padding=(1, 0, 1), bias=False, indice_key=indice_key)
 
 
 def conv1x1(in_planes, out_planes, stride=1, indice_key=None):
-    return spconv.SubMConv3d(in_planes, out_planes, kernel_size=1, stride=stride,
+    return SubMConv3d(in_planes, out_planes, kernel_size=1, stride=stride,
                              padding=1, bias=False, indice_key=indice_key)
 
 
 class ResContextBlock(nn.Module):
     def __init__(self, in_filters, out_filters, kernel_size=(3, 3, 3), stride=1, indice_key=None):
         super(ResContextBlock, self).__init__()
+
+        self.indice_key = indice_key
+
         self.conv1 = conv1x3(in_filters, out_filters, indice_key=indice_key + "bef")
         self.bn0 = nn.BatchNorm1d(out_filters)
         self.act1 = nn.LeakyReLU()
@@ -72,6 +77,9 @@ class ResContextBlock(nn.Module):
 
     def forward(self, x):
         shortcut = self.conv1(x)
+
+        '''
+        #spconv1
         shortcut.features = self.act1(shortcut.features)
         shortcut.features = self.bn0(shortcut.features)
 
@@ -87,6 +95,26 @@ class ResContextBlock(nn.Module):
         resA.features = self.act3(resA.features)
         resA.features = self.bn2(resA.features)
         resA.features = resA.features + shortcut.features
+        '''
+        
+        shortcut = shortcut.replace_feature(self.act1(shortcut.features))
+        shortcut = shortcut.replace_feature(self.bn0(shortcut.features))
+        
+        shortcut.indice_dict[self.indice_key + "bef"].ksize = [3,1,3]
+        shortcut = self.conv1_2(shortcut)
+        shortcut = shortcut.replace_feature(self.act1_2(shortcut.features))
+        shortcut = shortcut.replace_feature(self.bn0_2(shortcut.features))
+        
+        x.indice_dict[self.indice_key + "bef"] = shortcut.indice_dict[self.indice_key + "bef"]
+        resA = self.conv2(x)
+        resA = resA.replace_feature(self.act2(resA.features))
+        resA = resA.replace_feature(self.bn1(resA.features))
+        
+        resA.indice_dict[self.indice_key + "bef"].ksize = [1,3,3]
+        resA = self.conv3(resA)
+        resA = resA.replace_feature(self.act3(resA.features))
+        resA = resA.replace_feature(self.bn2(resA.features))
+        resA = resA.replace_feature(resA.features + shortcut.features)
 
         return resA
 
@@ -97,6 +125,7 @@ class ResBlock(nn.Module):
         super(ResBlock, self).__init__()
         self.pooling = pooling
         self.drop_out = drop_out
+        self.indice_key = indice_key
 
         self.conv1 = conv3x1(in_filters, out_filters, indice_key=indice_key + "bef")
         self.act1 = nn.LeakyReLU()
@@ -116,10 +145,10 @@ class ResBlock(nn.Module):
 
         if pooling:
             if height_pooling:
-                self.pool = spconv.SparseConv3d(out_filters, out_filters, kernel_size=3, stride=2,
+                self.pool = SparseConv3d(out_filters, out_filters, kernel_size=3, stride=2,
                                                 padding=1, indice_key=indice_key, bias=False)
             else:
-                self.pool = spconv.SparseConv3d(out_filters, out_filters, kernel_size=3, stride=(2, 2, 1),
+                self.pool = SparseConv3d(out_filters, out_filters, kernel_size=3, stride=(2, 2, 1),
                                                 padding=1, indice_key=indice_key, bias=False)
         self.weight_initialization()
 
@@ -131,6 +160,9 @@ class ResBlock(nn.Module):
 
     def forward(self, x):
         shortcut = self.conv1(x)
+
+        '''
+        #spconv1
         shortcut.features = self.act1(shortcut.features)
         shortcut.features = self.bn0(shortcut.features)
 
@@ -147,6 +179,26 @@ class ResBlock(nn.Module):
         resA.features = self.bn2(resA.features)
 
         resA.features = resA.features + shortcut.features
+        '''
+        
+        shortcut = shortcut.replace_feature(self.act1(shortcut.features))
+        shortcut = shortcut.replace_feature(self.bn0(shortcut.features))
+        
+        shortcut.indice_dict[self.indice_key + "bef"].ksize = [1,3,3]
+        shortcut = self.conv1_2(shortcut)
+        shortcut = shortcut.replace_feature(self.act1_2(shortcut.features))
+        shortcut = shortcut.replace_feature(self.bn0_2(shortcut.features))
+        
+        x.indice_dict[self.indice_key + "bef"] = shortcut.indice_dict[self.indice_key + "bef"]
+        resA = self.conv2(x)
+        resA = resA.replace_feature(self.act2(resA.features))
+        resA = resA.replace_feature(self.bn1(resA.features))
+        
+        resA.indice_dict[self.indice_key + "bef"].ksize = [3,1,3]
+        resA = self.conv3(resA)
+        resA = resA.replace_feature(self.act3(resA.features))
+        resA = resA.replace_feature(self.bn2(resA.features))
+        resA = resA.replace_feature(resA.features + shortcut.features)
 
         if self.pooling:
             resB = self.pool(resA)
@@ -159,6 +211,8 @@ class UpBlock(nn.Module):
     def __init__(self, in_filters, out_filters, kernel_size=(3, 3, 3), indice_key=None, up_key=None):
         super(UpBlock, self).__init__()
         # self.drop_out = drop_out
+        self.indice_key = indice_key
+
         self.trans_dilao = conv3x3(in_filters, out_filters, indice_key=indice_key + "new_up")
         self.trans_act = nn.LeakyReLU()
         self.trans_bn = nn.BatchNorm1d(out_filters)
@@ -176,7 +230,7 @@ class UpBlock(nn.Module):
         self.bn3 = nn.BatchNorm1d(out_filters)
         # self.dropout3 = nn.Dropout3d(p=dropout_rate)
 
-        self.up_subm = spconv.SparseInverseConv3d(out_filters, out_filters, kernel_size=3, indice_key=up_key,
+        self.up_subm = SparseInverseConv3d(out_filters, out_filters, kernel_size=3, indice_key=up_key,
                                                   bias=False)
 
         self.weight_initialization()
@@ -188,6 +242,9 @@ class UpBlock(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, skip):
+
+        '''
+        #spconv1
         upA = self.trans_dilao(x)
         upA.features = self.trans_act(upA.features)
         upA.features = self.trans_bn(upA.features)
@@ -208,6 +265,28 @@ class UpBlock(nn.Module):
         upE = self.conv3(upE)
         upE.features = self.act3(upE.features)
         upE.features = self.bn3(upE.features)
+        '''
+        
+        upA = self.trans_dilao(x)
+        upA = upA.replace_feature(self.trans_act(upA.features))
+        upA = upA.replace_feature(self.trans_bn(upA.features))
+        
+        upA = self.up_subm(upA)
+        upA = upA.replace_feature(upA.features + skip.features)
+
+        upE = self.conv1(upA)
+        upE = upE.replace_feature(self.act1(upE.features))
+        upE = upE.replace_feature(self.bn1(upE.features))
+        
+        upE.indice_dict[self.indice_key].ksize = [3,1,3]
+        upE = self.conv2(upE)
+        upE = upE.replace_feature(self.act2(upE.features))
+        upE = upE.replace_feature(self.bn2(upE.features))
+        
+        upE.indice_dict[self.indice_key].ksize = [1,3,3]
+        upE = self.conv3(upE)
+        upE = upE.replace_feature(self.act3(upE.features))
+        upE = upE.replace_feature(self.bn3(upE.features))
 
         return upE
 
@@ -215,6 +294,8 @@ class UpBlock(nn.Module):
 class ReconBlock(nn.Module):
     def __init__(self, in_filters, out_filters, kernel_size=(3, 3, 3), stride=1, indice_key=None):
         super(ReconBlock, self).__init__()
+        self.indice_key = indice_key
+
         self.conv1 = conv3x1x1(in_filters, out_filters, indice_key=indice_key + "bef")
         self.bn0 = nn.BatchNorm1d(out_filters)
         self.act1 = nn.Sigmoid()
@@ -228,6 +309,10 @@ class ReconBlock(nn.Module):
         self.act1_3 = nn.Sigmoid()
 
     def forward(self, x):
+
+        '''
+        #spconv1
+
         shortcut = self.conv1(x)
         shortcut.features = self.bn0(shortcut.features)
         shortcut.features = self.act1(shortcut.features)
@@ -242,6 +327,26 @@ class ReconBlock(nn.Module):
         shortcut.features = shortcut.features + shortcut2.features + shortcut3.features
 
         shortcut.features = shortcut.features * x.features
+        '''
+
+        shortcut = self.conv1(x)
+        shortcut = shortcut.replace_feature(self.bn0(shortcut.features))
+        shortcut = shortcut.replace_feature(self.act1(shortcut.features))
+
+        x.indice_dict[self.indice_key + "bef"] = shortcut.indice_dict[self.indice_key + "bef"]
+        x.indice_dict[self.indice_key + "bef"].ksize = [1,3,1]
+        shortcut2 = self.conv1_2(x)
+        shortcut2 = shortcut2.replace_feature(self.bn0_2(shortcut2.features))
+        shortcut2 = shortcut2.replace_feature(self.act1_2(shortcut2.features))
+
+        x.indice_dict[self.indice_key + "bef"] = shortcut.indice_dict[self.indice_key + "bef"]
+        x.indice_dict[self.indice_key + "bef"].ksize = [1,1,3]
+        shortcut3 = self.conv1_3(x)
+        shortcut3 = shortcut3.replace_feature(self.bn0_3(shortcut3.features))
+        shortcut3 = shortcut3.replace_feature(self.act1_3(shortcut3.features))
+        shortcut = shortcut3.replace_feature(shortcut.features + shortcut2.features + shortcut3.features)
+
+        shortcut = shortcut.replace_feature(shortcut.features * x.features)
 
         return shortcut
 
@@ -275,14 +380,14 @@ class Asymm_3d_spconv(nn.Module):
 
         self.ReconNet = ReconBlock(2 * init_size, 2 * init_size, indice_key="recon")
 
-        self.logits = spconv.SubMConv3d(4 * init_size, self.nclasses, indice_key="logit", kernel_size=3, stride=1, padding=1,
+        self.logits = SubMConv3d(4 * init_size, self.nclasses, indice_key="logit", kernel_size=3, stride=1, padding=1,
                                         bias=True)
 
     def forward(self, batch_dict, stat='train'):
         voxel_features, voxel_coords = batch_dict['voxel_features'], batch_dict['voxel_coords']
         batch_size = batch_dict['batch_size']
 
-        ret = spconv.SparseConvTensor(
+        ret = SparseConvTensor(
             features=voxel_features,
             indices=voxel_coords.int(),
             spatial_shape=self.spatial_shape,
@@ -304,8 +409,9 @@ class Asymm_3d_spconv(nn.Module):
 
         up0e = self.ReconNet(up1e)    # 32,256,256,32
 
-        up0e.features = torch.cat((up0e.features, up1e.features), 1)
-
+        # up0e.features = torch.cat((up0e.features, up1e.features), 1)
+        up0e = up0e.replace_feature(torch.cat((up0e.features, up1e.features), 1))
+        
         logits = self.logits(up0e)
         y = logits.dense()    # 2,19,256,256,32
         return y, down1c, down2c, down3c

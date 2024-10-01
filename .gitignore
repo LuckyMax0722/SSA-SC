@@ -130,3 +130,5 @@ weights/
 
 # Python
 .idea/
+ckpt/pretrained_model.zip
+ckpt/pretrained_model/weights_epoch_054.pth

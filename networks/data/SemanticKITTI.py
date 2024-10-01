@@ -84,7 +84,7 @@ class Voxelizer():
             sig = sig[index]
             labels = labels[index]
 
-        voxel_ind = (np.floor((xyz - min_bound) / intervals)).astype(np.int)
+        voxel_ind = (np.floor((xyz - min_bound) / intervals)).astype(np.int32)
 
         # process labels
         processed_label = np.ones(self.grid_size, dtype=np.uint8) * self.ignore_label
@@ -100,6 +100,7 @@ class Voxelizer():
         return_xyz = np.concatenate((return_xyz, xyz), axis=1)
 
         return_fea = np.concatenate((return_xyz, sig[..., np.newaxis]), axis=1)  # 3+3+1
+
         data_dict['feature'] = return_fea
         data_dict['voxel_ind'] = voxel_ind
         data_dict['processed_label'] = processed_label
